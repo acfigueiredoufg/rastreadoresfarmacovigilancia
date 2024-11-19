@@ -1,0 +1,257 @@
+library(tidyverse)
+library(readxl)
+library(readr)
+library(openxlsx)
+library(dplyr)
+
+setwd("U:/UGRA/FARMACOVIGILÂNCIA/2024/BUSCA ATIVA")
+
+# IMPORTANTE: RODAR ATÉ A LINHA 118 -------------------------------------------
+# LEITURA DAS PLANILHAS ---------------------------------------------------
+# Leitura dos dados da planilha de exames
+plan_exam <- read_excel("plan_exam.xlsx",
+                        col_types = c("numeric","numeric","text","text","text",
+                                      "text","text","date","text","text",
+                                      "numeric"))
+View(plan_exam)
+
+# Leitura dos dados da planilha dos medicamentos
+plan_med <- read_excel("plan_med.xlsx",
+                       col_types = c("numeric", "text", "text",
+                                     "numeric", "text", "numeric", "text", "date"))
+View(plan_med)
+
+# Leitura dos dados da planilha dos controles
+plan_contr <- read_excel("intern.xlsx")
+
+# ORGANIZAR OS BANCOS DE DADOS --------------------------------------------
+# Normalizar os nomes das variáveis
+plan_exam <- rename(plan_exam,
+                    "Rastreador"=SubExame,"Paciente"= 'Nome do Paciente',
+                    "Valor"=...11,"Data"=Agendamento)
+
+plan_med <- rename(plan_med,
+                   "Data"= 'DATA DISPENSACAO', "Prontuário"= 'PRONTUARIO',
+                   "Paciente"= 'PACIENTE',"Leito"= 'LEITO',
+                   "Valor"= 'CODIGO MEDICAMENTO',
+                   "Rastreador"= 'MEDICAMENTO')
+
+plan_contr <- rename(plan_contr, "Data Internação"='DATA INTERNACAO',
+                     "Paciente"='NOME', "Prontuário"='PRONTUARIO',
+                     "Leito"='LEITO ATUAL')
+
+# FILTRAR AS COLUNAS DE CADA BANCO DE DADOS -------------------------------
+#Filtrar as colunas da planilha de exames
+plan_exam <- select(plan_exam,"Prontuário", "Paciente",
+                    "Rastreador", "Data", "Valor")
+
+exames_filtro <-filter(plan_exam,
+                       Rastreador=="PLAQUETAS"&Valor<50000|
+                         Rastreador=="LEUCÓCITOS TOTAIS"&Valor<3000|
+                         Rastreador=="POTASSIO"&(Valor<3|Valor>6)|
+                         Rastreador=="CREATININA"&Valor>2.4|
+                         Rastreador=="INR"&Valor>4|
+                         Rastreador=="TEMPO DE PROTROMBINA"&Valor>100)
+
+exames_filtro <- add_column(exames_filtro, Leito = '')
+
+#Colocar as colunas em ordem
+exames_filtro <- exames_filtro [c("Data", "Prontuário","Paciente",
+                                  "Leito", "Rastreador", "Valor")]
+
+#Filtrar as colunas da planilha de medicamentos
+meds <- select(plan_med, "Data", "Prontuário", "Paciente",
+               "Leito", "Rastreador", "Valor")
+
+meds_filtro <- filter (meds,
+                       `Valor` == '5326' |`Valor` == '1157'|
+                         `Valor` == '1158'|`Valor` == '1127'|
+                         `Valor` =='1128'|`Valor` == '1255'|
+                         `Valor` == '1190'|`Valor`== '1192'|
+                         `Valor` == '2391' |`Valor` == '432'|
+                         `Valor` == '401'|`Valor` == '6472'|
+                         `Valor` == '5890' |`Valor` == '6471'|
+                         `Valor` == '13652')
+
+#Filtrar as colunas da planilha de controles
+contr_filtro <- select(plan_contr,"Data Internação", "Prontuário",
+                       "Leito") %>% distinct()
+
+# ALTERAR OS NOMES DOS MEDICAMENTOS E DOS EXAMES --------------------------
+#Alterar os nomes dos medicamentos
+meds_filtro <- meds_filtro %>%
+  mutate(
+    Rastreador = case_when(
+      Rastreador == "ANFOTERICINA B DESOXICOLATO 50 MG SOL. INJ. FA" ~ "Anfotericina B",
+      Rastreador == "POLIMIXINA B 500.000 UI SOL. INJETAVEL FA" ~ "Polimixina B",
+      Rastreador == "VITAMINA K 10MG/ML SOL. INJETAVEL AMPOLA 1ML (IM)" ~ "Vitamina K",
+      Rastreador == "PROMETAZINA 50MG SOLUCAO INJETAVEL AMPOLA 2ML" ~ "Prometazina",
+      Rastreador == "FLUMAZENIL 0,1MG/ML SOLUCAO INJETAVEL AMPOLA 5ML" ~ "Flumazenil",
+      Rastreador == "NALOXONA 0,4MG SOLUCAO INJETAVEL AMPOLA 1ML" ~ "Naloxona",
+      Rastreador == "PROTAMINA 1000UI/ML SOLUCAO INJETAVEL AMPOLA 5ML" ~ "Protamina",
+      Rastreador == "POLIESTIRENOSSULFONATO DE CALCIO 900MG/G 30G" ~ "Sorcal",
+      TRUE ~ Rastreador
+    ),
+    Valor = case_when(
+      Rastreador %in% c("Anfotericina B", "Polimixina B", "Vitamina K",
+                        "Prometazina",  "Flumazenil", "Naloxona",
+                        "Protamina", "Sorcal") ~ NA,
+      TRUE ~ Valor))
+
+#Alterar os nomes dos exames
+exames_filtro <- exames_filtro %>%
+  mutate(
+    Rastreador = case_when(
+      Rastreador == "CREATININA" ~ "Creatinina",
+      Rastreador == "POTASSIO" ~ "Potassio",
+      Rastreador == "TEMPO DE PROTROMBINA" ~ "TTPA",
+      Rastreador == "INR" ~ "RNI",
+      Rastreador == "LEUCÓCITOS TOTAIS" ~ "Leucócitos",
+      Rastreador == "PLAQUETAS" ~ "Plaquetas",
+      TRUE ~ Rastreador))
+
+# UNIR AS PLANILHAS DE MEDICAMENTOS E EXAMES ------------------------------
+Busca_Ativa <- bind_rows(meds_filtro, exames_filtro)
+
+Busca_Ativa_Final <- left_join(Busca_Ativa, contr_filtro, by = "Prontuário")
+
+#Para resolver o erro MANY-TO-MANY#
+Busca_Ativa_Final <- left_join(Busca_Ativa, contr_filtro, by = "Prontuário", relationship = "many-to-many")
+
+# APAGAR LEITOS COM PS/10/OBS/3/11 ----------------------------------------
+Busca_Ativa_Final <- Busca_Ativa_Final %>%
+  filter(!str_detect(Leito.y, "^(10|11|OBS|3|PS)"))
+
+#Retirar a coluna Leito.x e renomear a coluna Leito.y
+Busca_Ativa_Final <- select(Busca_Ativa_Final, - Leito.x )
+Busca_Ativa_Final <- rename(Busca_Ativa_Final, "Leito" = Leito.y)
+
+# ORGANIZAR COLUNAS DO BANCO DE DADOS ---------------------------------
+Busca_Ativa_Final <- add_column(Busca_Ativa_Final, "EAM" = "", "OBS" = "")
+
+Busca_Ativa_Final <- Busca_Ativa_Final [c("Data Internação", "Data", "Prontuário","Paciente", "Leito", "Rastreador","Valor", "EAM", "OBS")]
+
+# ALTERAR O FORMATO DAS DATAS ---------------------------------------------
+#O formato deve ficar separado por '-' ao invés de '/' para que a leitura da data
+# possa ser feita corretamente na hora de nomear a planilha
+#Busca_Ativa_Final <- mutate(Busca_Ativa_Final,
+#`Data Internação`= format(as.POSIXct(`Data Internação`, format = "%Y-%m-%d %H:%M:%S"), "%d-%m-%Y"),
+#"Data" = format(as.POSIXct(`Data`, format = "%Y-%m-%d %H:%M:%S"), "%d-%m-%Y"))
+#ESSE CÓDIGO VAI FUNCIONAR QUANDO A DATA TIVER HORA, MINUTO E SEGUNDO
+
+# REMOVER DUPLICATAS ------------------------------------------------------
+Busca_Ativa_Final <- Busca_Ativa_Final %>%
+distinct(Prontuário, Rastreador, .keep_all = TRUE)
+
+# PREENCHER A COLUNA OBS --------------------------------------------------
+#Resultados de exames do mesmo dia da admissão
+Busca_Ativa_Final <- Busca_Ativa_Final %>%
+  mutate(
+    OBS = if_else(!is.na(Valor) & `Data Internação` == Data, "Valor da data de admissão", OBS),
+    EAM = if_else(!is.na(Valor) & `Data Internação` == Data, "NÃO", EAM))
+
+#Quando houver dispensação de Vitamina K e NPT
+#Separar as dispensações de NPT
+plan_med_NPT <- plan_med %>%
+  filter(Valor %in% c(400058, 400695))
+
+#Preencher a coluna OBS com "Uso de NPT"
+Busca_Ativa_Final <- Busca_Ativa_Final %>%
+  mutate(OBS = case_when(
+    Prontuário %in% plan_med_NPT$Prontuário & Rastreador == "Vitamina K" ~ "Uso de NPT",
+    TRUE ~ OBS),
+  EAM = case_when(
+    Prontuário %in% plan_med_NPT$Prontuário & Rastreador == "Vitamina K" ~ "NÃO",
+    TRUE ~ EAM))
+
+#Quando houver dispensação de Prometazina e Haldol/Quetiapina
+#Separar as dispensações de Haldol e Quetiapina
+plan_med_Psico <- plan_med %>%
+  filter(Valor %in% c(9570, 9571, 1211))
+
+#Preencher a coluna OBS com "Uso de Antipsicótico"
+Busca_Ativa_Final <- Busca_Ativa_Final %>%
+  mutate(OBS = case_when(
+    Prontuário %in% plan_med_Psico$Prontuário & Rastreador == "Prometazina" ~
+      "Uso de Antipsicótico",
+    TRUE ~ OBS),
+    EAM = case_when(
+      Prontuário %in% plan_med_Psico$Prontuário & Rastreador == "Prometazina" ~ "NÃO",
+      TRUE ~ EAM))
+
+# RNI e Vitamina K
+
+# PREENCHER AUTOMATICAMENTE CASO O RASTREADOR JÁ TENHA SIDO AVALIADO NA BUSCA ANTERIOR
+# COPIAR OS DADOS QUE JÁ FORAM PREENCHIDOS PARA A PLANILHA  --------
+#Lembrar de criar uma cópia da última planilha na pasta "BUSCA ATIVA"
+#Lembrar de excluir células mescladas caso tenha
+#Lembrar que alterar o nome da planilha no código
+Anterior <- read_excel("Busca_Ativa_Completa_2024-10-14_a_2024-10-22.xlsx")
+
+Anterior <- Anterior %>%
+  select(Prontuário,Rastreador, EAM, OBS) %>%
+  distinct(Prontuário, Rastreador, .keep_all = TRUE)
+
+# Combinação dos dataframes com base nas colunas Prontuário e Rastreador
+Busca_Ativa_Nova <- merge(Busca_Ativa_Final, Anterior, by = c("Prontuário", "Rastreador"), all.x = TRUE)
+
+Busca_Ativa_Nova <- Busca_Ativa_Nova [c("Data Internação", "Data", "Prontuário","Paciente", "Leito", "Rastreador","Valor", "EAM.x", "OBS.x", "EAM.y", "OBS.y")]
+
+# PREENCHER A COLUNA DE OBS COM BASE NA BUSCA ANTERIOR --------------------
+#Alterar as informações com base na busca anterior
+#rm(Busca_Ativa_Nova)
+# Copiar as informações com base na busca anterior
+Busca_Ativa_Nova <- Busca_Ativa_Nova %>%
+  mutate(
+    OBS.x = case_when(
+      OBS.y %in% "Valor da data de admissão" & Rastreador == "Creatinina" ~ "Admissão com creatinina alta",
+      OBS.y %in% "Valor da data de admissão" & Rastreador == "Plaquetas" ~ "Admissão com trombocitopenia",
+      OBS.y %in% "Valor da data de admissão" & Rastreador == "Leucócitos" ~ "Admissão com leucopenia",
+      OBS.y == "Valor da data de admissão" & Rastreador == "Potassio" & Valor <= 3 ~ "Admissão com hipocalemia",
+      OBS.y == "Valor da data de admissão" & Rastreador == "Potassio" & Valor > 3 ~ "Admissão com hipercalemia",
+      TRUE ~ OBS.x  # Se nenhuma das condições acima for atendida, mantém OBS.x
+    )
+  ) %>%
+#para não incluir casos de "Queda Pontual" ou "Sem registros de intercorrências"
+#uma vez que, devem ser avaliados novamente, para garantir que não houve nenhuma
+#intercorrência ou possível RAM
+  mutate(
+   OBS.x = if_else(
+     is.na(OBS.x) | OBS.x == "",  # Condição para OBS.x vazio
+     if_else(OBS.y %in% c("Queda pontual", "Sem registros de intercorrências"),  # Verifica se OBS.y contém valores específicos
+             OBS.x, OBS.y),
+     OBS.x))
+
+#Preecher a coluna de EAM com base na busca anterior
+Busca_Ativa_Nova <- Busca_Ativa_Nova%>%
+  mutate(EAM.x = if_else(
+  !(OBS.y %in% c("Queda pontual", "Sem registros de intercorrências")),  # Verifica se OBS.y NÃO contém valores específicos
+  coalesce(EAM.y, EAM.x),  # Coalesce em EAM.x se a condição for verdadeira
+  EAM.x  # Mantém EAM.x se a condição for falsa
+))
+
+#Remover colunas
+Busca_Ativa_Nova <- Busca_Ativa_Nova %>%
+  select(-EAM.y, -OBS.y) %>%
+  rename(EAM = EAM.x, OBS = OBS.x)
+
+# SALVAR A PLANILHA COM A DATA NO NOME ------------------------------------
+#Organizar a coluna 'DATA' por ordem cronológica
+Busca_Ativa_Nova <- Busca_Ativa_Nova %>%
+  arrange(Data)
+
+# Extrair o valor da primeira linha da coluna 'Data' para usar no nome do arquivo
+Data_Inicial <- Busca_Ativa_Nova$Data[1]
+
+# Extrair o valor da última linha da coluna 'Data' para usar no nome do arquivo
+Data_Final <- tail(Busca_Ativa_Nova$Data, 1)
+
+#Criar nome da planilha
+Busca_Ativa_Completa <- paste("Busca_Ativa_Completa_", Data_Inicial, "_a_", Data_Final, ".xlsx", sep = "")
+
+#Salvar a planilha
+openxlsx::write.xlsx(Busca_Ativa_Nova, Busca_Ativa_Completa, asTable = TRUE)
+
+#SELECIONAR RASTERADORES (VPP ALTO) -------------------------------------
+Busca_Ativa_Selecionados <- Busca_Ativa_Nova %>%
+  filter(Rastreador %in% c("Naloxona", "Flumazenil", "RNI", "TTPA", "Protamina"))
